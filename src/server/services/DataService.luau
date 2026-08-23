@@ -10,6 +10,7 @@ local RunService = game:GetService("RunService")
 local Shared = game:GetService("ReplicatedStorage"):WaitForChild("Shared")
 local GameConfig = require(Shared.Config.GameConfig)
 local EconomyMath = require(Shared.Util.EconomyMath)
+local SchemaMigration = require(Shared.Util.SchemaMigration)
 
 local DataService = {}
 
@@ -75,15 +76,14 @@ function DataService.LoadPlayer(player: Player)
 		local ok, saved = pcall(function()
 			return store:GetAsync("player_" .. userId)
 		end)
-		if ok and type(saved) == "table" then
-			state.cash = tonumber(saved.cash) or state.cash
-			state.rebirths = tonumber(saved.rebirths) or 0
-			state.totalEarned = tonumber(saved.totalEarned) or 0
+		if ok then
+			local migrated = SchemaMigration.migrate(saved)
+			state.cash = migrated.cash
+			state.rebirths = migrated.rebirths
+			state.totalEarned = migrated.totalEarned
+			state.creatures = migrated.creatures
 			state.incomeMultiplier = 1 + state.rebirths * GameConfig.RebirthIncomeBonus
 			state.baseSlots = EconomyMath.baseSlots(state.rebirths, GameConfig.BaseSlotsPerRebirth)
-			if type(saved.creatures) == "table" then
-				state.creatures = saved.creatures
-			end
 		end
 	end
 
@@ -123,6 +123,7 @@ function DataService.SavePlayer(player: Player)
 	end
 	pcall(function()
 		store:SetAsync("player_" .. player.UserId, {
+			version = SchemaMigration.SCHEMA_VERSION,
 			cash = state.cash,
 			rebirths = state.rebirths,
 			totalEarned = state.totalEarned,

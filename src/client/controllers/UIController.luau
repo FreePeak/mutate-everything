@@ -334,6 +334,29 @@ function UI.Start(network)
 		renderRoster(payload.roster or {})
 	end)
 
+	local REASON_TEXT = {
+		not_loaded = "Still loading, try again",
+		base_full = "Base full! Sell or rebirth first.",
+		insufficient_cash = "Not enough cash.",
+		same_creature = "A creature cannot fuse with itself.",
+		missing_parent = "That creature is gone.",
+		own_creature = "You cannot steal your own creature!",
+		already_carrying = "You are already carrying one. Run!",
+		base_locked = "Their base is locked.",
+		too_far = "Get closer to grab it.",
+		on_cooldown = "Lock still recharging.",
+		not_on_pad = "Bring it back to YOUR base first.",
+	}
+
+	network.Notified:Connect(function(reason, kind)
+		local ticker = refs.gui and refs.gui:FindFirstChild("TickerText")
+		if ticker then
+			ticker.Text = REASON_TEXT[reason] or ("Hmm... " .. tostring(reason))
+			ticker.TextColor3 = kind == "error" and Color3.fromRGB(255, 120, 120)
+				or Color3.fromRGB(255, 230, 130)
+		end
+	end)
+
 	network.Announced:Connect(function(message, kind)
 		local ticker = refs.gui and refs.gui:FindFirstChild("TickerText")
 		if ticker then
