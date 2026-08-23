@@ -1,0 +1,9 @@
+# Tooling
+sourcemap.json
+*.rbxl
+*.rbxlx
+*.rbxm
+*.lock
+
+# OS
+.DS_Store
