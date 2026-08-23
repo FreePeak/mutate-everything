@@ -17,6 +17,57 @@ local announce: any -- function(player, message, kind)
 -- uid -> { thiefUserId, ownerId, grabbedAt }
 local activeThefts: { [string]: any } = {}
 
+local function setCarrySpeed(player: Player, multiplier: number)
+	local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		humanoid.WalkSpeed = 16 * multiplier
+	end
+end
+
+local function restoreSpeed(player: Player)
+	local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
+	if humanoid then
+		humanoid.WalkSpeed = 16
+	end
+end
+
+--- Owner (or anyone) stops the thief: creature returns home, thief is stunned.
+function TheftService.TryDefend(defender: Player, thiefUserId: number): (boolean, string)
+	local targetUid
+	for uid, theft in activeThefts do
+		if theft.thiefUserId == thiefUserId then
+			targetUid = uid
+			break
+		end
+	end
+	if not targetUid then
+		return false, "not_carrying"
+	end
+
+	local defenderCharacter = defender.Character
+	local root = defenderCharacter and defenderCharacter:FindFirstChild("HumanoidRootPart")
+	local thief = Players:GetPlayerByUserId(thiefUserId)
+	local thiefRoot = thief and thief.Character and thief.Character:FindFirstChild("HumanoidRootPart")
+
+	if not root or not thiefRoot then
+		return false, "no_character"
+	end
+	if (root.Position - thiefRoot.Position).Magnitude > 15 then
+		return false, "too_far"
+	end
+
+	TheftService.AbortTheft(targetUid, "defended")
+
+	-- Stun: freeze the failed thief briefly.
+	local thiefHumanoid = thief.Character:FindFirstChildOfClass("Humanoid")
+	if thiefHumanoid then
+		thiefHumanoid.WalkSpeed = 0
+		task.delay(GameConfig.StealStunSeconds, restoreSpeed, thief)
+	end
+
+	return true, "ok"
+end
+
 function TheftService.Init(deps)
 	baseService = deps.BaseService
 	creatureService = deps.CreatureService
@@ -118,6 +169,21 @@ function TheftService.TrySteal(thief: Player, ownerId: number, uid: string): (bo
 		grabbedAt = os.clock(),
 	}
 
+	if not baseService.AttachCarried(uid, thief) then
+		activeThefts[uid] = nil
+		return false, "model_missing"
+	end
+	setCarrySpeed(thief, GameConfig.CarrySpeedMultiplier)
+
+	if announce then
+		local owner = Players:GetPlayerByUserId(ownerId)
+		announce(
+			thief,
+			("%s is stealing %s from %s!"):format(thief.Name, live.creature.name, owner and owner.Name or "?"),
+			"danger"
+		)
+	end
+
 	task.spawn(function()
 		-- If nobody secures the steal within 60s it returns home automatically.
 		task.wait(60)
@@ -138,6 +204,8 @@ function TheftService.TrySecure(thief: Player): (boolean, string)
 			end
 
 			activeThefts[uid] = nil
+			restoreSpeed(thief)
+
 			local state = dataService.GetState(theft.ownerId)
 			if state then
 				for index, creature in state.creatures do
@@ -151,6 +219,7 @@ function TheftService.TrySecure(thief: Player): (boolean, string)
 			local thiefState = dataService.GetState(thief.UserId)
 			local live = creatureService.GetLive(uid)
 			if thiefState and live and #thiefState.creatures < thiefState.baseSlots then
+				baseService.DetachCarried(uid, thief.UserId)
 				live.ownerId = thief.UserId
 				table.insert(thiefState.creatures, live.creature)
 				if announce then
@@ -162,6 +231,7 @@ function TheftService.TrySecure(thief: Player): (boolean, string)
 				end
 			else
 				-- No room: creature is lost to the void. Harsh but funny.
+				baseService.DetachCarried(uid, nil)
 				creatureService.UnregisterLive(uid)
 				creatureService.CreatureRemoved:Fire(uid)
 			end
@@ -171,17 +241,39 @@ function TheftService.TrySecure(thief: Player): (boolean, string)
 	return false, "not_carrying"
 end
 
---- Owner fought back / timeout: creature returns home.
+--- Owner fought back / timeout / thief left: creature returns home.
 function TheftService.AbortTheft(uid: string, reason: string)
 	local theft = activeThefts[uid]
 	if not theft then
 		return
 	end
 	activeThefts[uid] = nil
-	if announce and reason == "defended" then
-		local owner = Players:GetPlayerByUserId(theft.ownerId)
-		if owner then
-			announce(owner, ("You defended your %s!"):format(uid), "defense")
+
+	baseService.DetachCarried(uid, theft.ownerId)
+
+	local thief = Players:GetPlayerByUserId(theft.thiefUserId)
+	if thief then
+		restoreSpeed(thief)
+	end
+
+	if announce then
+		if reason == "defended" then
+			local owner = Players:GetPlayerByUserId(theft.ownerId)
+			if owner then
+				announce(owner, ("You defended your base from %s!"):format(
+					(Players:GetPlayerByUserId(theft.thiefUserId) or { Name = "a thief" }).Name), "defense")
+			end
+		elseif reason == "timeout" then
+			announce(thief, "The creature wriggled free and went home.", "info")
+		end
+	end
+end
+
+--- Cleanup when a player leaves mid-theft.
+function TheftService.OnPlayerRemoving(player: Player)
+	for uid, theft in activeThefts do
+		if theft.thiefUserId == player.UserId then
+			TheftService.AbortTheft(uid, "thief_left")
 		end
 	end
 end

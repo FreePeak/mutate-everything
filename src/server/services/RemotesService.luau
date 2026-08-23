@@ -18,6 +18,7 @@ local remoteNames = {
 	RequestFuse = "RemoteFunction",
 	RequestLock = "RemoteFunction",
 	RequestSteal = "RemoteFunction",
+	RequestDefend = "RemoteFunction",
 	RequestRebirth = "RemoteFunction",
 }
 

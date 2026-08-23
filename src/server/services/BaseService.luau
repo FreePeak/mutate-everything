@@ -14,6 +14,8 @@ local BaseService = {}
 local world: Folder
 local plots: { [number]: any } = {}
 local plotAnchors: { [any]: number } = {} -- spawn pad -> userId for Touched checks
+local conveyorPedestals: { [number]: Part } = {}
+local pedestalDisplays: { [Part]: any } = {}
 
 local PLOT_RADIUS = 40
 local SLOT_SPACING = 10
@@ -68,6 +70,94 @@ local function buildRunway()
 	label.TextColor3 = Color3.fromRGB(255, 220, 80)
 	label.Text = "MUTATE CONVEYOR"
 	label.Parent = sign
+
+	-- Purchase pedestals along both edges of the runway.
+	for index = -3, 3 do
+		local pedestal = makePart({
+			position = Vector3.new(index * 24, 1.5, -10),
+			size = Vector3.new(5, 2, 5),
+			color = Color3.fromRGB(50, 50, 60),
+			material = Enum.Material.Metal,
+			name = "Pedestal" .. tostring(index),
+			parent = runway,
+		})
+
+		local prompt = Instance.new("ProximityPrompt")
+		prompt.HoldDuration = 0.3
+		prompt.MaxActivationDistance = 12
+		prompt.ObjectText = "Conveyor"
+		prompt.ActionText = "Inspect"
+		prompt.Parent = pedestal
+		prompt.Triggered:Connect(function(player)
+			local entry = pedestalDisplays[pedestal]
+			if entry then
+				BaseService.ConveyorPurchaseRequested:Fire(player, entry.id)
+			end
+		end)
+
+		conveyorPedestals[index] = pedestal
+		pedestalDisplays[pedestal] = nil
+	end
+end
+
+local conveyorCursor = -3
+
+--- Show a catalog species on the next pedestal (round-robin).
+function BaseService.SetConveyorDisplay(entry)
+	local pedestal = conveyorPedestals[conveyorCursor]
+	if not pedestal then
+		return
+	end
+	conveyorCursor = conveyorCursor >= 3 and -3 or conveyorCursor + 1
+
+	-- Clear previous display model if present.
+	if pedestalDisplays[pedestal] and pedestalDisplays[pedestal].model then
+		pedestalDisplays[pedestal].model:Destroy()
+	end
+
+	local rarityColor = RarityConfig.colors[entry.rarity] or Color3.new(1, 1, 1)
+
+	local specimen = Instance.new("Part")
+	specimen.Anchored = true
+	specimen.Shape = Enum.PartType.Ball
+	specimen.Size = Vector3.new(3, 3, 3)
+	specimen.Color = entry.bodyColor
+	specimen.Material = Enum.Material.SmoothPlastic
+	specimen.Position = pedestal.Position + Vector3.new(0, 4, 0)
+	specimen.Parent = pedestal.Parent
+
+	local billboard = Instance.new("BillboardGui")
+	billboard.Size = UDim2.new(0, 220, 0, 64)
+	billboard.StudsOffset = Vector3.new(0, 3, 0)
+	billboard.AlwaysOnTop = false
+	billboard.Parent = specimen
+
+	local nameLabel = Instance.new("TextLabel")
+	nameLabel.Size = UDim2.fromScale(1, 0.6)
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.TextScaled = true
+	nameLabel.Font = Enum.Font.GothamBold
+	nameLabel.TextColor3 = rarityColor
+	nameLabel.Text = ("%s | $%d"):format(entry.name, entry.cost)
+	nameLabel.Parent = billboard
+
+	local incomeLabel = Instance.new("TextLabel")
+	incomeLabel.Size = UDim2.fromScale(1, 0.35)
+	incomeLabel.Position = UDim2.fromScale(0, 0.62)
+	incomeLabel.BackgroundTransparency = 1
+	incomeLabel.TextScaled = true
+	incomeLabel.Font = Enum.Font.Gotham
+	incomeLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
+	incomeLabel.Text = ("$%d/s"):format(entry.baseIncome)
+	incomeLabel.Parent = billboard
+
+	local prompt = pedestal:FindFirstChildOfClass("ProximityPrompt")
+	if prompt then
+		prompt.ObjectText = entry.name
+		prompt.ActionText = ("Buy $%d"):format(entry.cost)
+	end
+
+	pedestalDisplays[pedestal] = { id = entry.id, model = specimen }
 end
 
 local function buildPlot(userId: number, origin: Vector3)
@@ -102,11 +192,26 @@ function BaseService.Init()
 	world.Parent = workspace
 
 	BaseService.PlayerTouchedPad = Instance.new("BindableEvent")
+	BaseService.ConveyorPurchaseRequested = Instance.new("BindableEvent")
+	BaseService.DefendRequested = Instance.new("BindableEvent")
 
 	buildRunway()
 end
 
 function BaseService.Start()
+	-- Carried creatures hover above the thief's head; updated on the server so
+	-- all clients see the same chase state.
+	local RunService = game:GetService("RunService")
+	RunService.Heartbeat:Connect(function()
+		for uid, carried in carriedCreatures do
+			local thief = Players:GetPlayerByUserId(carried.thiefUserId)
+			local root = thief and thief.Character and thief.Character:FindFirstChild("HumanoidRootPart")
+			if root then
+				carried.model:PivotTo(CFrame.new(root.Position + Vector3.new(0, 5, 0)))
+			end
+		end
+	end)
+
 	-- Plot assignment is driven externally (bootstrap wires PlayerInitialized
 	-- to AssignPlot); this loop only refreshes owner beacons for late joiners.
 	task.spawn(function()
@@ -268,6 +373,86 @@ function BaseService.RemoveCreatureModel(uid: string)
 			model:Destroy()
 			plot.models[uid] = nil
 		end
+	end
+end
+
+-- ------------------------------------------------------- carried creatures
+
+-- uid -> { thiefUserId, model }
+local carriedCreatures: { [string]: any } = {}
+
+--- Lift a creature off its plot and start following the thief.
+function BaseService.AttachCarried(uid: string, thief: Player)
+	for _, plot in plots do
+		local model = plot.models[uid]
+		if model then
+			plot.models[uid] = nil -- detach from grid bookkeeping during carry
+			carriedCreatures[uid] = { thiefUserId = thief.UserId, model = model }
+
+			local prompt = Instance.new("ProximityPrompt")
+			prompt.Name = "DefendPrompt"
+			prompt.HoldDuration = 0.2
+			prompt.MaxActivationDistance = 15
+			prompt.ObjectText = "Thief!"
+			prompt.ActionText = ("Stop %s"):format(thief.DisplayName)
+			prompt.Parent = model.PrimaryPart or model:FindFirstChildWhichIsA("BasePart")
+			prompt.Triggered:Connect(function(player)
+				BaseService.DefendRequested:Fire(player, thief.UserId)
+			end)
+
+			return true
+		end
+	end
+	return false
+end
+
+--- Stop carrying. If `restoreOwnerId` is given and that player still has a
+--- plot, the model returns to their grid slot; otherwise it is destroyed.
+function BaseService.DetachCarried(uid: string, ownerId: number?)
+	local carried = carriedCreatures[uid]
+	if not carried then
+		return false
+	end
+	carriedCreatures[uid] = nil
+
+	local model = carried.model
+	local oldPrompt = model:FindFirstChild("DefendPrompt", true)
+	if oldPrompt then
+		oldPrompt:Destroy()
+	end
+	if not model.Parent then
+		return false
+	end
+
+	local ownerPlot = ownerId and plots[ownerId] or nil
+	if ownerPlot then
+		ownerPlot.models[uid] = model
+		model:PivotTo(CFrame.new(ownerPlot.center.Position + Vector3.new(0, 4, 0)))
+		BaseService.RelayoutPlot(ownerId)
+	else
+		model:Destroy()
+	end
+	return true
+end
+
+function BaseService.IsCarried(uid: string): boolean
+	return carriedCreatures[uid] ~= nil
+end
+
+--- Re-grid all models on a plot (used after models leave/return).
+function BaseService.RelayoutPlot(userId: number)
+	local plot = plots[userId]
+	if not plot then
+		return
+	end
+	local index = 0
+	for uid, model in plot.models do
+		index += 1
+		local column = (index - 1) % 6
+		local row = math.floor((index - 1) / 6) % 6
+		local target = plot.center.Position
+			+ Vector3.new((column - 2.5) * SLOT_SPACING, 2, (row - 2) * SLOT_SPACING + PLOT_RADIUS / 3)
+		model:PivotTo(CFrame.new(target))
 	end
 end
 

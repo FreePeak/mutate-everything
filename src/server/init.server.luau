@@ -8,6 +8,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local GameConfig = require(Shared.Config.GameConfig)
 local EconomyMath = require(Shared.Util.EconomyMath)
+local Catalog = require(Shared.Config.CreatureCatalog)
 
 local ServicesFolder = script.Parent:WaitForChild("services")
 
@@ -146,6 +147,18 @@ RemotesService.OnRequest("RequestSteal", function(player, ownerId, uid)
 	return ok, reason
 end)
 
+RemotesService.OnRequest("RequestDefend", function(player, thiefUserId)
+	if type(thiefUserId) ~= "number" then
+		return false, "bad_request"
+	end
+	local ok, reason = TheftService.TryDefend(player, thiefUserId)
+	if not ok then
+		RemotesService.Fire("Notify", player, reason, "error")
+	end
+	broadcastState(player)
+	return ok, reason
+end)
+
 RemotesService.OnRequest("RequestRebirth", function(player)
 	local ok, reason = EconomyService.TryRebirth(player, DataService, CreatureService)
 	if ok then
@@ -174,7 +187,33 @@ DataService.PlayerInitialized.Event:Connect(function(player, _state)
 end)
 
 DataService.PlayerRemoving.Event:Connect(function(player)
+	TheftService.OnPlayerRemoving(player)
 	BaseService.ReleasePlot(player.UserId)
+end)
+
+-- Conveyor: physical pedestal display + purchase path.
+CreatureService.ConveyorSpawned.Event:Connect(function(speciesId)
+	local entry = Catalog.byId[speciesId]
+	if entry then
+		BaseService.SetConveyorDisplay(entry)
+	end
+end)
+
+BaseService.ConveyorPurchaseRequested.Event:Connect(function(player, speciesId)
+	local ok, reason = CreatureService.TryBuy(player, speciesId, DataService)
+	if not ok then
+		RemotesService.Fire("Notify", player, reason, "error")
+	else
+		broadcastState(player)
+	end
+end)
+
+BaseService.DefendRequested.Event:Connect(function(defender, thiefUserId)
+	local ok, _reason = TheftService.TryDefend(defender, thiefUserId)
+	broadcastState(defender)
+	if ok then
+		broadcastState(Players:GetPlayerByUserId(thiefUserId))
+	end
 end)
 
 CreatureService.CreatureAdded.Event:Connect(function(player, creature)

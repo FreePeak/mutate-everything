@@ -70,6 +70,10 @@ function Network.RequestSteal(ownerId: number, uid: string)
 	return invoke("RequestSteal", ownerId, uid)
 end
 
+function Network.RequestDefend(thiefUserId: number)
+	return invoke("RequestDefend", thiefUserId)
+end
+
 function Network.RequestRebirth()
 	return invoke("RequestRebirth")
 end
