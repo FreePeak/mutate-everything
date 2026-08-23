@@ -194,6 +194,7 @@ function BaseService.Init()
 	BaseService.PlayerTouchedPad = Instance.new("BindableEvent")
 	BaseService.ConveyorPurchaseRequested = Instance.new("BindableEvent")
 	BaseService.DefendRequested = Instance.new("BindableEvent")
+	BaseService.StealRequested = Instance.new("BindableEvent")
 
 	buildRunway()
 end
@@ -349,6 +350,19 @@ function BaseService.SpawnCreatureModel(player: Player, creature)
 	nameLabel.TextColor3 = rarityColor
 	nameLabel.Text = ("%s | $%s/s"):format(creature.name, tostring(creature.income))
 	nameLabel.Parent = billboard
+
+	-- Steal interaction: visible to everyone; the server rejects attempts on
+	-- your own creatures and while the owner's base is locked.
+	local stealPrompt = Instance.new("ProximityPrompt")
+	stealPrompt.Name = "StealPrompt"
+	stealPrompt.HoldDuration = 0.6
+	stealPrompt.MaxActivationDistance = 10
+	stealPrompt.ObjectText = creature.name
+	stealPrompt.ActionText = "Steal"
+	stealPrompt.Parent = body
+	stealPrompt.Triggered:Connect(function(player)
+		BaseService.StealRequested:Fire(player, uid)
+	end)
 
 	-- Arrange in a grid over the plot.
 	local slotsUsed = 0

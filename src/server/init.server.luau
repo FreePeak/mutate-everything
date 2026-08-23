@@ -216,6 +216,19 @@ BaseService.DefendRequested.Event:Connect(function(defender, thiefUserId)
 	end
 end)
 
+BaseService.StealRequested.Event:Connect(function(player, uid)
+	local live = CreatureService.GetLive(uid)
+	if not live then
+		return
+	end
+	local ok, reason = TheftService.TrySteal(player, live.ownerId, uid)
+	if not ok then
+		RemotesService.Fire("Notify", player, reason, "error")
+	else
+		broadcastState(player)
+	end
+end)
+
 CreatureService.CreatureAdded.Event:Connect(function(player, creature)
 	BaseService.SpawnCreatureModel(player, creature)
 end)
