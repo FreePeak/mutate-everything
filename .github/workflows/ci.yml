@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        uses: CompeyDev/setup-rokit@v0.1.2
+        with:
+          version: v0.3.10
+
+      - name: Install lune
+        uses: notpeter/install-lune-action@v1
+
+      - name: Unit tests
+        run: lune run tests/run_tests.luau
+
+      - name: Syntax check all sources
+        run: lune run tests/syntax_check.luau
+
+      - name: Rojo build validation
+        run: rojo build default.project.json -o /tmp/mutate.rbxlx

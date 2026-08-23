@@ -42,8 +42,11 @@ via `src/shared/Config/GameConfig.luau`.
 ```sh
 lune run tests/run_tests.luau      # unit tests (pure logic modules)
 lune run tests/syntax_check.luau   # compile-check every source file
+rojo build -o mutate-everything.rbxlx  # validate project mapping / produce place file
 rojo serve                         # live-sync into Roblox Studio
 ```
+
+CI runs tests, syntax checks, and a Rojo build on every push to master.
 
 ## Design notes
 
